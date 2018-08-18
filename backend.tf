@@ -2,11 +2,10 @@
 # Core state
 #
 terraform {
-  backend "s3" {
-	bucket = "ingersollrand-tfstate-useast1"
+	backend "s3" {
+	bucket = "terraform-tfstate-us-east-1"
 	region = "us-east-1"
-	key = "ingersollrand-apps-ops.tfstate"
-	encrypt = "true"
+	key = "terraform-apps-ops.tfstate"
 	acl = "private"
   }
 }

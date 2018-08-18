@@ -2,25 +2,25 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/apex/log"
 )
 
 const stateS3Bucket = `
-# 
+#
 # Bucket for Terraform state files
 #
-resource "aws_s3_bucket" "tfstate_%s" {
-  bucket = "${var.project_name}-tfstate-%s"
-  acl    = "private"
-  versioning {
-    enabled = true
-  }
-  tags {
-    Name    = "${var.project_name}-tfstate-%s"
+resource "aws_s3_bucket" "{{.Required.StateBucket}}" {
+  bucket = "${var.project_name}-{{.Required.StateBucket}}-{{.Required.ConcatRegion}}"
+	{{.Optional.ACL}}
+	{{.Optional.Versioning}}
+	tags {
+		Name    = "${var.project_name}-{{.Required.StateBucket}}-{{.Required.ConcatRegion}}"
     Project = "${var.project_name}"
     Meta    = "author:${var.provisioner}"
   }
@@ -31,17 +31,17 @@ const coreState = `#
 # Core state
 #
 terraform {
-  backend "s3" {
-	bucket = "%s-tfstate-%s"
-	region = "%s"
-	key = "%s-apps-ops.tfstate"
-	encrypt = "true"
-	acl = "private"
+	backend "s3" {
+	bucket = "{{.Required.ProjectName}}-{{.Required.StateBucket}}-{{.Required.Region}}"
+	region = "{{.Required.Region}}"
+	key = "{{.Required.ProjectName}}-apps-ops.{{.Required.StateBucket}}"
+	{{.Optional.Encrypt}}
+	{{.Optional.ACL}}
   }
 }
 `
 
-const awsProviderTF = `
+const defaultVars = `
 # AWS PROVIDER
 provider "aws" {
   region = "${var.aws_region}"
@@ -50,27 +50,27 @@ provider "aws" {
   ]
   version = "~> 1.3"
 }
-`
-const awsAccountIDTF = `
+
 # AWS ACCOUNT ID
 variable "aws_account_id" {
-  default = "%d"
+  default = "{{.Required.AccountID}}"
 }
-`
-const awsRegionTF = `
+
 # AWS REGION
 variable "aws_region" {
-  default = "%s"
+  default = "{{.Required.Region}}"
 }
-`
-const projectNameTF = `
+
+# CONCAT AWS REGION
+variable "concat_aws_region" {
+  default = "{{.Required.ConcatRegion}}"
+}
+
 # AWS PROJECT NAME 
 variable "project_name" {
-  default = "%s"
+  default = "{{.Required.ProjectName}}"
 }
-`
 
-const provisionerTF = `
 # AWS PROVISIONER
 variable "provisioner" {
   default = "terraform"
@@ -96,12 +96,6 @@ var validAWSRegions = map[string]struct{}{
 	"sa-east-1":      struct{}{},
 }
 
-type varsTerraform struct {
-	awsAccountID int64
-	awsRegion    string
-	projectName  string
-}
-
 type userInput struct{}
 type initTerraform struct{}
 
@@ -122,13 +116,12 @@ func (c *InitFacade) start() {
 	if err != nil {
 		panic(err)
 	}
-
 	if err := c.createInitFiles.terraformInit(results); err != nil {
 		panic(err)
 	}
 }
 
-func (t *initTerraform) terraformInit(vars *varsTerraform) error {
+func (t *initTerraform) terraformInit(vars Vars) error {
 	varsConfigFile, err := os.Create("vars-config.tf")
 	if err != nil {
 		log.WithError(err).Error("unable to create vars config file")
@@ -150,14 +143,30 @@ func (t *initTerraform) terraformInit(vars *varsTerraform) error {
 	}
 	defer s3StateFile.Close()
 
-	awsRegionRaw := strings.Replace(vars.awsRegion, "-", "", -1)
-	coreStateTF := fmt.Sprintf(coreState, vars.projectName, awsRegionRaw, vars.awsRegion, vars.projectName)
-	varsTF := awsProviderTF +
-		fmt.Sprintf(awsAccountIDTF, vars.awsAccountID) +
-		fmt.Sprintf(awsRegionTF, vars.awsRegion) +
-		fmt.Sprintf(projectNameTF, vars.projectName) +
-		provisionerTF
-	s3TF := fmt.Sprintf(stateS3Bucket, awsRegionRaw, awsRegionRaw, awsRegionRaw)
+	vars.ConcatRegion = strings.Replace(vars.Required.Region, "-", "", -1)
+
+	coreStateTemplate := template.Must(template.New("coreState").Parse(coreState))
+	var coreTPL bytes.Buffer
+	if err := coreStateTemplate.Execute(&coreTPL, &vars); err != nil {
+		panic(err)
+	}
+	coreStateTF := strings.Replace(coreTPL.String(), "\n\t\n", "\n", -1)
+
+	defaultVarsTemplate := template.Must(template.New("defaultVars").Parse(defaultVars))
+	var defaultVarsTPL bytes.Buffer
+	if err := defaultVarsTemplate.Execute(&defaultVarsTPL, &vars); err != nil {
+		panic(err)
+	}
+	varsTF := strings.Replace(defaultVarsTPL.String(), "\n\t\n", "\n", -1)
+
+	stateS3BucketTemplate := template.Must(template.New("stateS3Bucket").Parse(stateS3Bucket))
+	var stateTPL bytes.Buffer
+
+	if err := stateS3BucketTemplate.Execute(&stateTPL, &vars); err != nil {
+		panic(err)
+	}
+
+	s3TF := strings.Replace(stateTPL.String(), "\n\t\n", "\n", -1)
 
 	_, err = varsConfigFile.WriteString(varsTF)
 	if err != nil {
@@ -178,7 +187,7 @@ func (t *initTerraform) terraformInit(vars *varsTerraform) error {
 	return nil
 }
 
-func (u *userInput) handleUserInput(stdin *bufio.Reader) (*varsTerraform, error) {
+func (u *userInput) handleUserInput(stdin *bufio.Reader) (Vars, error) {
 
 	fmt.Print("AWS Account ID: ")
 	awsAccountID := readIntInput(stdin, "AWS Account ID")
@@ -193,16 +202,25 @@ func (u *userInput) handleUserInput(stdin *bufio.Reader) (*varsTerraform, error)
 	projectName, err := stdin.ReadString('\n')
 	if err != nil {
 		log.WithError(err).Error("unable to read project name input")
-		return nil, err
+		return Vars{}, err
 	}
 	projectName = strings.TrimRightFunc(projectName, func(c rune) bool {
 		//In windows newline is \r\n
 		return c == '\r' || c == '\n'
 	})
-	return &varsTerraform{
-		awsAccountID: awsAccountID,
-		awsRegion:    awsRegion,
-		projectName:  projectName,
+
+	return Vars{
+		Required: Required{
+			StateBucket: "tfstate",
+			AccountID:   awsAccountID,
+			Region:      awsRegion,
+			ProjectName: projectName,
+		},
+		Optional: Optional{
+			ACL:        aclTF,
+			Versioning: versioningTF,
+			Encrypt:    encryptTF,
+		},
 	}, nil
 }
 

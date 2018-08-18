@@ -13,9 +13,6 @@ var cmdInit = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(cmdInit)
-	//cmdInit.AddCommand(versionCmd)
-	//cmdInit.Flags().IntVarP(&times, "times", "n", 1, "times to echo")
-	//cmdInit.Flags().IntVarP(&times2, "times2", "t", 1, "times to echo again")
 }
 
 func initRun(cmd *cobra.Command, args []string) {

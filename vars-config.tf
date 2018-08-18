@@ -10,7 +10,7 @@ provider "aws" {
 
 # AWS ACCOUNT ID
 variable "aws_account_id" {
-  default = "1234563562"
+  default = "12344346456"
 }
 
 # AWS REGION
@@ -20,42 +20,7 @@ variable "aws_region" {
 
 # AWS PROJECT NAME 
 variable "project_name" {
-  default = "ingersollrand"
-}
-
-# AWS DEV ENVIRONMENT 
-variable "dev_environment" {
-  default = "development"
-}
-
-# AWS DEV ENV
-variable "dev_env" {
-  default = "dev"
-}
-
-# AWS STG ENVIRONMENT 
-variable "stg_environment" {
-  default = "staging"
-}
-
-# AWS STG ENV
-variable "stg_env" {
-  default = "stg"
-}
-
-# AWS PRD ENVIRONMENT 
-variable "prd_environment" {
-  default = "production"
-}
-
-# AWS PRD ENV
-variable "prd_env" {
-  default = "prd"
-}
-
-# AWS GRD ENV
-variable "grd_env" {
-  default = "grd"
+  default = "terraform"
 }
 
 # AWS PROVISIONER
